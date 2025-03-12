@@ -40,3 +40,5 @@ A coding system for educational text analysis, supporting both calibration and c
    pip install -r requirements.txt
 
 > Sorry, the localization work has not been completely finished yet, as well as the presentation of process coding results. I will process it further in the future.
+<img width="1193" alt="图片" src="https://github.com/user-attachments/assets/de84b510-351d-4dc5-82a0-39f2f33e2fc0" />
+
