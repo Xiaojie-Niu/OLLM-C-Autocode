@@ -11,8 +11,18 @@ class TextProcessor:
     def __init__(self, api_settings: dict, progress_callback: Callable[[int, int], None]):
         self.base_url = api_settings['base_url']
         self.api_key = api_settings['api_key']
-        self.model = api_settings.get('model', 'gpt-4-0613')
+        self.model = api_settings.get('model', 'gpt-4o-all')
         self.progress_callback = progress_callback
+        self.preview_callback = None  # 新增预览回调
+        self.delay_seconds = 3  # 设置默认延时为3秒，可以根据需要调整
+
+    def set_preview_callback(self, callback: Callable[[str, str, str], None]):
+        """设置预览回调函数"""
+        self.preview_callback = callback
+        
+    def set_delay_seconds(self, seconds: int):
+        """设置延时秒数"""
+        self.delay_seconds = seconds
 
     def read_excel_data(self, file_path: str) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
         """读取Excel文件中的数据"""
@@ -67,6 +77,7 @@ class TextProcessor:
                 prompt += f"- {note}\n"
         
         prompt += f"\n待编码文本：{text}\n"
+        prompt += f"\n你只需要返回编码的字符类别，只输出字母，不要返回任何其他的解释！\n"
         return prompt
 
     def call_model(self, prompt: str, timeout: float = 10.0) -> str:
@@ -111,8 +122,6 @@ class TextProcessor:
             except:
                 pass
 
-    # 在 processor.py 中修改 process_file 方法
-
     def process_file(self, file_path: str, save_path: str, mode: str, custom_prompt: Optional[str] = None) -> Dict:
         """处理文件并保存结果"""
         try:
@@ -148,9 +157,30 @@ class TextProcessor:
                 realtime_output = [f"\n文本 {idx + 1}/{total_items}:", f"内容: {display_text}"]
                 
                 try:
-                    prompt = custom_prompt or self.generate_prompt(code_df, notes, text)
+                    if custom_prompt:
+                        # 替换自定义提示词中的[文本]占位符
+                        prompt = custom_prompt.replace("[文本]", text)
+                    else:
+                        prompt = self.generate_prompt(code_df, notes, text)
+                    
+                    # 在调用模型前更新预览，显示"处理中..."
+                    if self.preview_callback:
+                        self.preview_callback(
+                            prompt, 
+                            human_code if mode == 'calibrate' else "N/A", 
+                            "处理中..."
+                        )
+                    
                     code = self.call_model(prompt)
                     codes.append(code)
+                    
+                    # 在获得模型回复后更新预览
+                    if self.preview_callback:
+                        self.preview_callback(
+                            prompt, 
+                            human_code if mode == 'calibrate' else "N/A", 
+                            code
+                        )
                     
                     result_item = {
                         'index': idx + 1,
@@ -178,6 +208,9 @@ class TextProcessor:
                     
                     detailed_results.append(result_item)
                     
+                    # 延长延时时间，让用户有更多时间查看结果
+                    time.sleep(self.delay_seconds)
+                    
                 except Exception as e:
                     codes.append('o')
                     error_msg = str(e)
@@ -190,6 +223,17 @@ class TextProcessor:
                     }
                     detailed_results.append(result_item)
                     realtime_output.append(f"错误: {error_msg}")
+                    
+                    # 在发生错误时更新预览
+                    if self.preview_callback:
+                        self.preview_callback(
+                            prompt if 'prompt' in locals() else "加载提示词出错", 
+                            human_code if mode == 'calibrate' else "N/A", 
+                            f"错误: {error_msg}"
+                        )
+                    
+                    # 错误后也延长延时
+                    time.sleep(self.delay_seconds)
                 
                 # 保存实时输出
                 results['realtime_outputs'].append(realtime_output)
