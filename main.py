@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QLabel, QPushButton, QComboBox, QMessageBox, QProgressBar,
     QTextEdit, QFileDialog, QTabWidget, QLineEdit, QGroupBox,
-    QGridLayout, QScrollArea
+    QGridLayout, QScrollArea, QSplitter, QHBoxLayout, QSpinBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from processor import TextProcessor
@@ -14,14 +14,17 @@ class ProcessingThread(QThread):
     progress_signal = pyqtSignal(int, int)
     finished_signal = pyqtSignal(dict)
     error_signal = pyqtSignal(str)
+    # 添加新的信号，用于实时更新预览
+    preview_signal = pyqtSignal(str, str, str)  # prompt, human_code, model_code
 
-    def __init__(self, file_path: str, save_path: str, mode: str, api_settings: dict, prompt: str):
+    def __init__(self, file_path: str, save_path: str, mode: str, api_settings: dict, prompt: str, delay_seconds: int):
         super().__init__()
         self.file_path = file_path
         self.save_path = save_path
         self.mode = mode
         self.api_settings = api_settings
         self.prompt = prompt
+        self.delay_seconds = delay_seconds
         self.processor = TextProcessor(api_settings, self.update_progress)
 
     def update_progress(self, current: int, total: int):
@@ -29,6 +32,9 @@ class ProcessingThread(QThread):
 
     def run(self):
         try:
+            # 修改processor类以传递预览信号和延时设置
+            self.processor.set_preview_callback(self.send_preview)
+            self.processor.set_delay_seconds(self.delay_seconds)
             results = self.processor.process_file(
                 self.file_path, 
                 self.save_path,
@@ -39,6 +45,9 @@ class ProcessingThread(QThread):
         except Exception as e:
             self.error_signal.emit(str(e))
 
+    def send_preview(self, prompt: str, human_code: str, model_code: str):
+        self.preview_signal.emit(prompt, human_code, model_code)
+
 class CodingSystemGUI(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -47,7 +56,7 @@ class CodingSystemGUI(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("编码系统")
-        self.setMinimumSize(1000, 800)
+        self.setMinimumSize(1200, 900)  # 增加窗口尺寸以容纳预览
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -61,23 +70,43 @@ class CodingSystemGUI(QMainWindow):
 
     def create_main_tab(self):
         widget = QWidget()
-        layout = QVBoxLayout(widget)
+        main_layout = QVBoxLayout(widget)
 
+        # 创建水平分割器，左侧是操作区，右侧是预览区
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        main_layout.addWidget(splitter)
+        
+        # 左侧操作区
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        
         # 文件选择区域
         file_group = self.create_file_group()
-        layout.addWidget(file_group)
+        left_layout.addWidget(file_group)
 
         # 提示词编辑区域
         prompt_group = self.create_prompt_group()
-        layout.addWidget(prompt_group)
+        left_layout.addWidget(prompt_group)
 
         # 任务控制区域
         task_group = self.create_task_group()
-        layout.addWidget(task_group)
+        left_layout.addWidget(task_group)
 
         # 进度显示区域
         progress_group = self.create_progress_group()
-        layout.addWidget(progress_group)
+        left_layout.addWidget(progress_group)
+        
+        splitter.addWidget(left_widget)
+        
+        # 右侧预览区
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        preview_group = self.create_preview_group()
+        right_layout.addWidget(preview_group)
+        splitter.addWidget(right_widget)
+        
+        # 设置分割器的初始大小
+        splitter.setSizes([600, 600])
 
         return widget
 
@@ -124,12 +153,20 @@ class CodingSystemGUI(QMainWindow):
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["校准", "编码"])
 
+        # 添加延时设置控件
+        layout.addWidget(QLabel("结果显示延时(秒):"), 0, 0)
+        self.delay_spinbox = QSpinBox()
+        self.delay_spinbox.setMinimum(1)
+        self.delay_spinbox.setMaximum(10)
+        self.delay_spinbox.setValue(3)  # 默认3秒
+        layout.addWidget(self.delay_spinbox, 0, 1)
+
+        layout.addWidget(QLabel("任务模式:"), 1, 0)
+        layout.addWidget(self.mode_combo, 1, 1)
+        
         self.start_button = QPushButton("开始处理")
         self.start_button.clicked.connect(self.start_processing)
-
-        layout.addWidget(QLabel("任务模式:"), 0, 0)
-        layout.addWidget(self.mode_combo, 0, 1)
-        layout.addWidget(self.start_button, 0, 2)
+        layout.addWidget(self.start_button, 1, 2)
 
         group.setLayout(layout)
         return group
@@ -146,13 +183,49 @@ class CodingSystemGUI(QMainWindow):
         self.results_display = QTextEdit()
         self.results_display.setReadOnly(True)
         scroll.setWidget(self.results_display)
-        scroll.setMinimumHeight(400)
+        scroll.setMinimumHeight(200)  # 减小高度以适应预览区
 
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
         layout.addWidget(QLabel("处理结果:"))
         layout.addWidget(scroll)
 
+        group.setLayout(layout)
+        return group
+        
+    def create_preview_group(self):
+        """创建预览区域"""
+        group = QGroupBox("实时预览")
+        layout = QVBoxLayout()
+        
+        # 提示词预览
+        layout.addWidget(QLabel("发送给模型的提示词:"))
+        self.prompt_preview = QTextEdit()
+        self.prompt_preview.setReadOnly(True)
+        self.prompt_preview.setMinimumHeight(300)
+        layout.addWidget(self.prompt_preview)
+        
+        # 编码结果预览
+        results_layout = QHBoxLayout()
+        
+        # 人工编码
+        human_layout = QVBoxLayout()
+        human_layout.addWidget(QLabel("人工编码:"))
+        self.human_code_preview = QLineEdit()
+        self.human_code_preview.setReadOnly(True)
+        human_layout.addWidget(self.human_code_preview)
+        results_layout.addLayout(human_layout)
+        
+        # 模型编码
+        model_layout = QVBoxLayout()
+        model_layout.addWidget(QLabel("模型编码:"))
+        self.model_code_preview = QLineEdit()
+        self.model_code_preview.setReadOnly(True)
+        model_layout.addWidget(self.model_code_preview)
+        results_layout.addLayout(model_layout)
+        
+        layout.addLayout(results_layout)
+        
         group.setLayout(layout)
         return group
 
@@ -218,7 +291,7 @@ class CodingSystemGUI(QMainWindow):
                 prompt = processor.generate_prompt(code_df, notes, "[文本]")
                 self.prompt_edit.setText(prompt)
         except Exception as e:
-            QMessageBox.warning(self, "Waring", f"Failed to load prompts: {str(e)}")
+            QMessageBox.warning(self, "警告", f"加载提示词失败: {str(e)}")
 
     def start_processing(self):
         if not self.validate_inputs():
@@ -226,38 +299,48 @@ class CodingSystemGUI(QMainWindow):
 
         # 清空之前的结果显示
         self.results_display.clear()
-        self.results_display.append("Preparing to start processing...")
+        self.results_display.append("准备开始处理...")
+        
+        # 清空预览区
+        self.prompt_preview.clear()
+        self.human_code_preview.clear()
+        self.model_code_preview.clear()
+
+        # 获取用户设置的延时时间
+        delay_seconds = self.delay_spinbox.value()
 
         self.processing_thread = ProcessingThread(
             self.file_path_edit.text(),
             self.save_path_edit.text(),
-            'calibrate' if self.mode_combo.currentText() == "Calibration" else "encode",
+            'calibrate' if self.mode_combo.currentText() == "校准" else "encode",
             {
                 'base_url': self.base_url_edit.text(),
                 'api_key': self.api_key_edit.text(),
                 'model': self.model_name_edit.text()
             },
-            self.prompt_edit.toPlainText()
+            self.prompt_edit.toPlainText(),
+            delay_seconds  # 传递延时设置
         )
 
         self.processing_thread.progress_signal.connect(self.update_progress)
         self.processing_thread.finished_signal.connect(self.show_results)
         self.processing_thread.error_signal.connect(self.show_error)
+        self.processing_thread.preview_signal.connect(self.update_preview)
 
         self.start_button.setEnabled(False)
         self.progress_bar.setValue(0)
-        self.status_label.setText("In processing...")
+        self.status_label.setText("处理中...")
         self.processing_thread.start()
 
     def validate_inputs(self):
         if not self.file_path_edit.text():
-            QMessageBox.warning(self, "Warning", "Please enter the text")
+            QMessageBox.warning(self, "警告", "请选择输入文件")
             return False
         if not self.save_path_edit.text():
-            QMessageBox.warning(self, "Warning", "Please select the save pathway")
+            QMessageBox.warning(self, "警告", "请选择保存位置")
             return False
         if not self.base_url_edit.text() or not self.api_key_edit.text():
-            QMessageBox.warning(self, "Warning", "Please input the API information in settings")
+            QMessageBox.warning(self, "警告", "请在设置中输入API信息")
             return False
         return True
 
@@ -265,6 +348,22 @@ class CodingSystemGUI(QMainWindow):
         progress = int((current / total) * 100)
         self.progress_bar.setValue(progress)
         self.status_label.setText(f"处理中... {progress}%")
+
+    def update_preview(self, prompt, human_code, model_code):
+        """更新预览区域的内容"""
+        self.prompt_preview.setText(prompt)
+        self.human_code_preview.setText(human_code)
+        self.model_code_preview.setText(model_code)
+        
+        # 设置文本颜色来突出显示变化
+        if model_code == "处理中...":
+            self.model_code_preview.setStyleSheet("color: blue;")
+        elif human_code != "N/A" and model_code == human_code:
+            self.model_code_preview.setStyleSheet("color: green;")
+        elif human_code != "N/A" and model_code != human_code:
+            self.model_code_preview.setStyleSheet("color: red;")
+        else:
+            self.model_code_preview.setStyleSheet("color: black;")
 
     def show_results(self, results):
         self.start_button.setEnabled(True)
