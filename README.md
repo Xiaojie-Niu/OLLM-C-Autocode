@@ -18,7 +18,7 @@
    ```bash
    pip install -r requirements.txt
 
-> 抱歉目前还没完全完成汉化工作，以及过程编码结果的呈现，后续会进一步处理。
+> 对不起，目前界面的英语翻译工作还未完全完成，将在后续进一步处理。
 
 # Coding System
 A coding system for educational text analysis, supporting both calibration and coding modes.
@@ -39,6 +39,6 @@ A coding system for educational text analysis, supporting both calibration and c
    ```bash
    pip install -r requirements.txt
 
-> Sorry, the localization work has not been completely finished yet, as well as the presentation of process coding results. I will process it further in the future.
+> Sorry, I haven't completely finished the English translation of the interface yet. I will process it further in the future.
 <img width="1193" alt="图片" src="https://github.com/user-attachments/assets/de84b510-351d-4dc5-82a0-39f2f33e2fc0" />
 
